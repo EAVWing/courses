@@ -1,0 +1,117 @@
+---
+title: "Practical Machine Learning - HAR Weight Lifting Analysis"
+author: "Stephen Ewing"
+date: "July 19, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Summary
+
+This report will demonstrate the statistical methods in R used to predict an outcome utilizing two machine learning algorithms, boosting with trees (gbm) and random forest (rf).  
+
+I will be utilizing the data from the paper cited below which captured correct and incorrect executions of Unilateral Dumbbell Biceps Curls and use models fitted to that data to predict in which manner members of the test set did the exercise (classe variable).
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+## Data Aquisition
+
+The first step is of course obtaining the data.
+```{r}
+filename <- "pml_training.csv"
+if(!file.exists(filename)){
+        fileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+        download.file(fileURL, filename)
+}
+filename2 <- "pml_testing.csv"
+if(!file.exists(filename2)){
+        fileURL2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+        download.file(fileURL2, filename2)
+}
+training <- read.csv(filename)
+testing <- read.csv(filename2)
+```
+
+## Data Cleaning
+
+A quick view of the training data shows there are quite a few NA values and blank cells that will throw off our algorithms.  It also looks like the first 7 columns are not predictive.  I will remove the columns that have NAs as well as the first 7 columns.  I'll do the same to the test data so we don't forget to later.
+```{r}
+preObjTrain <- training[,-c(1:7)]
+colToRemove <- which(colSums(is.na(preObjTrain)|preObjTrain=="")>0.9*dim(preObjTrain)[1])
+preObjTrain <- preObjTrain[,-colToRemove]
+preObjTest <- testing[,-c(1:7)]
+preObjTest <- preObjTest[,-colToRemove]
+```
+
+## Data Splitting
+
+Even though we already have a testing set and a training set in order to test for out-of-sample error I'll break the testing set into 70% test and 30% validate.
+```{r, comments = FALSE}
+library(caret)
+inTrain <- createDataPartition(preObjTrain$classe, p=.7, list=FALSE)
+train <- preObjTrain[inTrain,]
+validate <- preObjTrain[-inTrain,]
+```
+
+## Model Fitting
+
+I'm going to use two methods to fit our training model.  The first one a decision tree using the "rpart" method.  Decision trees work pretty well if the data is discrete enough.  They also let you make pretty dendrogram plots that I like a lot.
+
+First I'll set up some stuff so the algorithm doesn't take too long.
+```{r, comments=FALSE}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+Now we'll do the decision tree modeling
+```{r, cache=TRUE, comments=FALSE}
+library(rpart)
+modFit1 <- train(classe ~ ., data = train, method = "rpart", trControl = fitControl)
+```
+
+We can see the pretty dendrogram.
+```{r}
+library(rattle)
+library(rpart.plot)
+fancyRpartPlot(modFit1$finalModel)
+```
+
+Let's try to predict the validate table we made using this model.
+```{r, cache=TRUE}
+predictMod1 <- predict(modFit1, validate)
+confusionMatrix(validate$classe, predictMod1)
+```
+
+The accuracy of the model was total trash!
+```{r}
+confusionMatrix(validate$classe, predictMod1)$overall[1]
+```
+
+Time to break out the big guns.  The random forest algorithm might take forever to calculate but it should also give us the best accuracy for this type of problem.
+```{r, cache=TRUE}
+modFit2 <- train(classe ~ ., data = train, method = "rf", trControl = fitControl)
+```
+
+Let's try to predict the validate table we made using this model.
+```{r, cache=TRUE}
+predictMod2 <- predict(modFit2, validate)
+confusionMatrix(validate$classe, predictMod2)
+```
+
+This model fit very well and resulted in an accuracy over 99%!
+```{r}
+confusionMatrix(validate$classe, predictMod2)$overall[1]
+```
+
+## Test Set Prediction
+
+Now that we have a model that tests well against our validation set we can use it to try to predict the test set.
+```{r}
+predict(modFit2, preObjTest)
+```
